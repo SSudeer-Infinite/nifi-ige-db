@@ -1,0 +1,54 @@
+-- ==============================================================================
+-- Repeatable Migration: R__10_usp_get_batch_execution_status.sql
+-- Description: Status pipeline helper for UC4 polling
+-- ==============================================================================
+
+CREATE OR ALTER PROCEDURE INGFW.USP_GET_BATCH_EXECUTION_STATUS
+    @InvocationId VARCHAR(255)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Result Set 1: Batch Details & Counts
+    SELECT 
+        B.BATCH_NAME,
+        BE.ID AS BATCH_EXECUTION_ID,
+        BE.INVOCATION_ID,
+        BE.STATUS AS BATCH_STATUS,
+        B.RECOVERY_STRATEGY,
+        BE.START_TIME,
+        BE.END_TIME,
+        COUNT(JE.ID) AS TOTAL_JOBS,
+        SUM(CASE WHEN JE.STATUS = 'SUCCESS' THEN 1 ELSE 0 END) AS SUCCESSFUL_JOBS,
+        SUM(CASE WHEN JE.STATUS = 'FAILED' THEN 1 ELSE 0 END) AS FAILED_JOBS
+    FROM INGFW.LOG_BATCH_EXECUTIONS BE
+    JOIN INGFW.CONF_BATCHES B ON BE.BATCH_ID = B.ID
+    LEFT JOIN INGFW.LOG_JOB_EXECUTIONS JE ON BE.ID = JE.BATCH_EXECUTION_ID
+    WHERE BE.INVOCATION_ID = @InvocationId
+    GROUP BY B.BATCH_NAME, BE.ID, BE.INVOCATION_ID, BE.STATUS, B.RECOVERY_STRATEGY, BE.START_TIME, BE.END_TIME;
+
+    -- Result Set 2: Job Details
+    SELECT 
+        BJ.JOB_NAME,
+        JE.ID AS JOB_EXECUTION_ID,
+        JE.STATUS,
+        JE.RECORDS_PROCESSED,
+        JE.WATERMARK_START,
+        JE.WATERMARK_END
+    FROM INGFW.LOG_JOB_EXECUTIONS JE
+    JOIN INGFW.CONF_BATCH_JOBS BJ ON JE.JOB_ID = BJ.ID
+    JOIN INGFW.LOG_BATCH_EXECUTIONS BE ON JE.BATCH_EXECUTION_ID = BE.ID
+    WHERE BE.INVOCATION_ID = @InvocationId
+    ORDER BY JE.ID ASC;
+
+    -- Result Set 3: Job Errors (if any)
+    SELECT 
+        ERR.JOB_INVOCATION_ID,
+        ERR.ERROR_CODE,
+        ERR.ERROR_MESSAGE,
+        ERR.STACK_TRACE
+    FROM INGFW.LOG_JOB_ERRORS ERR
+    JOIN INGFW.LOG_BATCH_EXECUTIONS BE ON ERR.BATCH_INVOCATION_ID = BE.ID
+    WHERE BE.INVOCATION_ID = @InvocationId;
+END;
+GO

@@ -1,0 +1,79 @@
+name: Control DB Migration Pipeline
+
+on:
+  push:
+    branches: [ 'feature/*', 'main' ]
+    paths: [ 'db/**', '.github/workflows/flyway-migration.yml' ]
+  release:
+    types: [ published ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  lint-and-validate:
+    name: Lint & Validate SQL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run SQLFluff Linter
+        run: |
+          pip install sqlfluff
+          sqlfluff lint db/migration/ --dialect tsql
+
+  deploy-dev:
+    name: Deploy to DEV Database
+    needs: lint-and-validate
+    if: startsWith(github.ref, 'refs/heads/feature/')
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+      - name: Flyway Migrate DEV
+        uses: redgate/flyway-github-action@v1
+        with:
+          command: migrate
+          url: jdbc:sqlserver://${{ secrets.DB_HOST }}:${{ secrets.DB_PORT }};databaseName=${{ secrets.DB_NAME }};encrypt=true;trustServerCertificate=true
+          user: ${{ secrets.DB_USER }}
+          password: ${{ secrets.DB_PASSWORD }}
+          locations: filesystem:db/migration,filesystem:db/repeatable
+          baselineOnMigrate: true
+
+  deploy-staging:
+    name: Deploy to STAGING Database
+    needs: lint-and-validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Flyway Migrate STAGING
+        uses: redgate/flyway-github-action@v1
+        with:
+          command: migrate
+          url: jdbc:sqlserver://${{ secrets.DB_HOST }}:${{ secrets.DB_PORT }};databaseName=${{ secrets.DB_NAME }};encrypt=true;trustServerCertificate=true
+          user: ${{ secrets.DB_USER }}
+          password: ${{ secrets.DB_PASSWORD }}
+          locations: filesystem:db/migration,filesystem:db/repeatable
+
+  deploy-prod:
+    name: Deploy to PRODUCTION Database
+    needs: lint-and-validate
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Flyway Validate & Migrate PROD
+        uses: redgate/flyway-github-action@v1
+        with:
+          command: migrate
+          url: jdbc:sqlserver://${{ secrets.DB_HOST }}:${{ secrets.DB_PORT }};databaseName=${{ secrets.DB_NAME }};encrypt=true;trustServerCertificate=true
+          user: ${{ secrets.DB_USER }}
+          password: ${{ secrets.DB_PASSWORD }}
+          locations: filesystem:db/migration,filesystem:db/repeatable
+          baselineOnMigrate: false

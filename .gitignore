@@ -1,0 +1,11 @@
+# OS generated
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Flyway local logs / temp
+*.log
