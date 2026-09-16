@@ -131,11 +131,12 @@ erDiagram
     }
 
     CONF_BATCH_JOBS {
-        int ID PK "Identity(1,1)"
-        int BATCH_ID FK "References CONF_BATCHES(ID)"
+        uniqueidentifier JOB_ID PK "Default NEWID()"
+        int BATCH_ID FK "References CONF_BATCHES(ID), Nullable"
         varchar JOB_NAME UK "Unique job name"
         varchar JOB_TYPE "NO_RETRY or WITH_RETRY"
-        int PARENT_JOB_ID FK "Self-referencing dependency"
+        varchar PIPELINE_ID "Override pipeline ID"
+        uniqueidentifier PARENT_JOB_ID FK "Self-referencing dependency"
         int TRANSIENT_ERROR_RETRY_COUNT "Max transient retries"
         tinyint CLEANUP_ON_ERROR "1 = purge staging dir"
         int MAX_RETRY_ATTEMPTS "Job attempt ceiling"
@@ -155,7 +156,7 @@ erDiagram
 
     CONF_SOURCES {
         int ID PK "Identity(1,1)"
-        int JOB_ID FK "References CONF_BATCH_JOBS(ID)"
+        uniqueidentifier JOB_ID FK "References CONF_BATCH_JOBS(JOB_ID)"
         int CONNECTION_ID FK "References CONF_CONNECTIONS(ID)"
         nvarchar SOURCE_PROPERTIES "JSON schema, table, custom SQL"
         varchar WATERMARK_FIELD "Column for incremental check"
@@ -169,7 +170,7 @@ erDiagram
 
     CONF_DESTINATIONS {
         int ID PK "Identity(1,1)"
-        int JOB_ID FK "References CONF_BATCH_JOBS(ID)"
+        uniqueidentifier JOB_ID FK "References CONF_BATCH_JOBS(JOB_ID)"
         int CONNECTION_ID FK "References CONF_CONNECTIONS(ID)"
         nvarchar DESTINATION_PROPERTIES "JSON path, format, compression"
         int CHUNK_SIZE "Target file chunk size"
@@ -211,7 +212,7 @@ erDiagram
     LOG_JOB_EXECUTIONS {
         int ID PK "Identity(1,1)"
         int BATCH_EXECUTION_ID FK "References LOG_BATCH_EXECUTIONS(ID)"
-        int JOB_ID FK "References CONF_BATCH_JOBS(ID)"
+        uniqueidentifier JOB_ID FK "References CONF_BATCH_JOBS(JOB_ID)"
         varchar STATUS "PENDING, RUNNING, SUCCESS, FAILED"
         bigint RECORDS_PROCESSED "Total rows persisted"
         varchar WATERMARK_START "Pre-run watermark snapshot"
@@ -274,19 +275,20 @@ erDiagram
 ---
 
 #### 4.1.2 Table: `INGFW.CONF_BATCH_JOBS`
-* **Description**: Defines individual table extraction pipelines belonging to a batch, including dependency relationships, pipeline types, and retry parameters.
-* **Primary Key**: `ID`
+* **Description**: Defines individual table extraction pipelines belonging to a batch (or standalone jobs), including dependency relationships, pipeline types, and retry parameters.
+* **Primary Key**: `JOB_ID`
 * **Foreign Keys**:
-  * `BATCH_ID` $\rightarrow$ `INGFW.CONF_BATCHES(ID)` (ON DELETE CASCADE)
-  * `PARENT_JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(ID)` (Nullable, DAG dependency)
+  * `BATCH_ID` $\rightarrow$ `INGFW.CONF_BATCHES(ID)` (Nullable, ON DELETE SET NULL)
+  * `PARENT_JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(JOB_ID)` (Nullable, DAG dependency)
 
 | Column Name | Data Type | Nullable | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
-| `ID` | `INT IDENTITY(1,1)` | No | Auto | Primary key surrogate identifier. |
-| `BATCH_ID` | `INT` | No | - | Foreign key to parent batch. |
-| `JOB_NAME` | `VARCHAR(255)` | No | - | Unique job identifier (e.g., `J_POST_STAGING_001`). |
+| `JOB_ID` | `UNIQUEIDENTIFIER` | No | `NEWID()` | Unique job identifier primary key. |
+| `BATCH_ID` | `INT` | Yes | NULL | Foreign key to parent batch (NULL for standalone jobs). |
+| `JOB_NAME` | `VARCHAR(255)` | No | - | Unique job name/mnemonic (e.g., `J_POST_STAGING_001`). |
 | `JOB_TYPE` | `VARCHAR(50)` | No | - | Ingestion pipeline variant: `RDBMS_TO_PARQUET_NO_RETRY` or `RDBMS_TO_PARQUET_WITH_RETRY`. |
-| `PARENT_JOB_ID` | `INT` | Yes | NULL | Self-referencing FK specifying prerequisite job before dispatch. |
+| `PIPELINE_ID` | `VARCHAR(255)` | Yes | NULL | Optional override NiFi pipeline or process group identifier. |
+| `PARENT_JOB_ID` | `UNIQUEIDENTIFIER` | Yes | NULL | Self-referencing FK specifying prerequisite job before dispatch. |
 | `TRANSIENT_ERROR_RETRY_COUNT` | `INT` | No | `0` | Maximum allowable in-flight retries for transient errors. |
 | `CLEANUP_ON_ERROR` | `TINYINT` | No | `1` | `1` = Purge temporary staging folder `_tmp_<id>` on job failure. |
 | `MAX_RETRY_ATTEMPTS` | `INT` | No | `0` | Outer scheduler recovery attempt limit. |
@@ -315,13 +317,13 @@ erDiagram
 * **Description**: Source extraction metadata describing table schemas, custom SQL queries, watermark columns, chunking sizes, and throttle rates.
 * **Primary Key**: `ID`
 * **Foreign Keys**:
-  * `JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(ID)` (ON DELETE CASCADE)
+  * `JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(JOB_ID)` (ON DELETE CASCADE)
   * `CONNECTION_ID` $\rightarrow$ `INGFW.CONF_CONNECTIONS(ID)`
 
 | Column Name | Data Type | Nullable | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
 | `ID` | `INT IDENTITY(1,1)` | No | Auto | Primary key surrogate identifier. |
-| `JOB_ID` | `INT` | No | - | Foreign key to associated batch job. |
+| `JOB_ID` | `UNIQUEIDENTIFIER`| No | - | Foreign key to associated batch job (`JOB_ID`). |
 | `CONNECTION_ID` | `INT` | No | - | Foreign key to source connection profile. |
 | `SOURCE_PROPERTIES` | `NVARCHAR(MAX)` | Yes | NULL | JSON configuration containing `schema`, `table_name`, `custom_query`. |
 | `WATERMARK_FIELD` | `VARCHAR(255)` | Yes | NULL | Source column used for incremental tracking (e.g., `id`, `modified_date`). |
@@ -338,13 +340,13 @@ erDiagram
 * **Description**: Target landing configurations for jobs, specifying output directory paths, file formats, and back-pressure limits.
 * **Primary Key**: `ID`
 * **Foreign Keys**:
-  * `JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(ID)` (ON DELETE CASCADE)
+  * `JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(JOB_ID)` (ON DELETE CASCADE)
   * `CONNECTION_ID` $\rightarrow$ `INGFW.CONF_CONNECTIONS(ID)`
 
 | Column Name | Data Type | Nullable | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
 | `ID` | `INT IDENTITY(1,1)` | No | Auto | Primary key surrogate identifier. |
-| `JOB_ID` | `INT` | No | - | Foreign key to associated batch job. |
+| `JOB_ID` | `UNIQUEIDENTIFIER`| No | - | Foreign key to associated batch job (`JOB_ID`). |
 | `CONNECTION_ID` | `INT` | No | - | Foreign key to destination connection profile. |
 | `DESTINATION_PROPERTIES`| `NVARCHAR(MAX)` | Yes | NULL | JSON configuration containing `target_dir`, `format`, `compression`. |
 | `CHUNK_SIZE` | `INT` | Yes | `1000` | Target Parquet chunk row count. |
@@ -414,13 +416,13 @@ erDiagram
 * **Primary Key**: `ID`
 * **Foreign Keys**:
   * `BATCH_EXECUTION_ID` $\rightarrow$ `INGFW.LOG_BATCH_EXECUTIONS(ID)` (ON DELETE CASCADE)
-  * `JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(ID)`
+  * `JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(JOB_ID)`
 
 | Column Name | Data Type | Nullable | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
 | `ID` | `INT IDENTITY(1,1)` | No | Auto | Primary key surrogate identifier. |
 | `BATCH_EXECUTION_ID` | `INT` | No | - | Foreign key to parent batch execution instance. |
-| `JOB_ID` | `INT` | No | - | Foreign key to batch job definition. |
+| `JOB_ID` | `UNIQUEIDENTIFIER`| No | - | Foreign key to batch job definition (`JOB_ID`). |
 | `STATUS` | `VARCHAR(50)` | No | - | Job status: `PENDING`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`. |
 | `RECORDS_PROCESSED` | `BIGINT` | No | `0` | Number of rows extracted and successfully persisted to Parquet. |
 | `WATERMARK_START` | `VARCHAR(255)` | Yes | NULL | Starting watermark snapshot before extraction. |
@@ -478,17 +480,17 @@ All interaction with `METADATA_DB` is mediated exclusively through these 14 stor
 
 | Stored Procedure Name | Input Parameters | Output / Results | Purpose |
 | :--- | :--- | :--- | :--- |
-| `INGFW.USP_RESOLVE_BATCH_OR_JOB` | `@BatchName VARCHAR(255)`, `@JobName VARCHAR(255)` | Batch configs and active child job rows. | Resolves DAG execution plans, recovery strategy, and retry limits. |
-| `INGFW.USP_GET_JOB_SOURCE_CONFIG` | `@JobId INT` | Source table, connection config, watermark column, current watermark. | Prepares NiFi extraction processors with database source metadata. |
+| `INGFW.USP_RESOLVE_BATCH_OR_JOB` | `@BatchId INT`, `@JobId UNIQUEIDENTIFIER` | Batch configs and active child job rows. | Resolves DAG execution plans, recovery strategy, and retry limits. |
+| `INGFW.USP_GET_JOB_SOURCE_CONFIG` | `@JobId UNIQUEIDENTIFIER` | Source table, connection config, watermark column, current watermark. | Prepares NiFi extraction processors with database source metadata. |
 | `INGFW.USP_CREATE_BATCH_EXECUTION` | `@BatchId INT`, `@InvocationId VARCHAR(255)`, `@Status VARCHAR(50)` | `BATCH_EXECUTION_ID INT` | Inserts a new run into `LOG_BATCH_EXECUTIONS` (`RUNNING`). |
 | `INGFW.USP_UPDATE_BATCH_EXECUTION_STATUS` | `@BatchExecutionId INT`, `@Status VARCHAR(50)`, `@ErrorMessage NVARCHAR(MAX)` | None | Finalizes batch outcome (`SUCCESS`, `PARTIAL_SUCCESS`, `FAILED`). |
-| `INGFW.USP_CREATE_JOB_EXECUTION` | `@BatchExecutionId INT`, `@JobId INT`, `@WatermarkStart VARCHAR(255)` | `JOB_EXECUTION_ID INT` | Inserts job run into `LOG_JOB_EXECUTIONS` with pre-run watermark snapshot. |
+| `INGFW.USP_CREATE_JOB_EXECUTION` | `@BatchExecutionId INT`, `@JobId UNIQUEIDENTIFIER`, `@WatermarkStart VARCHAR(255)` | `JOB_EXECUTION_ID INT` | Inserts job run into `LOG_JOB_EXECUTIONS` with pre-run watermark snapshot. |
 | `INGFW.USP_UPDATE_JOB_EXECUTION_SUCCESS` | `@JobExecutionId INT`, `@RecordsProcessed BIGINT`, `@WatermarkEnd VARCHAR(255)` | None | Records successful job run, row count, and closing watermark. |
 | `INGFW.USP_UPDATE_JOB_EXECUTION_FAILURE` | `@JobExecutionId INT`, `@WatermarkEnd VARCHAR(255)` | None | Records job failure and retains pre-run watermark value. |
 | `INGFW.USP_ADVANCE_WATERMARK` | `@SourceId INT`, `@NewWatermarkVal BIGINT` | None | Two-phase commit: updates `CONF_WATERMARKS` table. |
 | `INGFW.USP_LOG_JOB_ERROR` | `@BatchExecutionId INT`, `@JobExecutionId INT`, `@ErrorCode VARCHAR(50)`, `@ErrorMessage NVARCHAR(MAX)`, `@StackTrace NVARCHAR(MAX)` | None | Centralized logging of errors with structured classification in `LOG_JOB_ERRORS`. |
 | `INGFW.USP_GET_BATCH_EXECUTION_STATUS` | `@InvocationId VARCHAR(255)` | 3 Result Sets: (1) Batch Summary, (2) Job Details, (3) Error Logs | Generates the official UC4 contract JSON status payload. |
-| `INGFW.USP_GET_WATERMARK_FOR_JOB` | `@JobName VARCHAR(255)` | `JOB_NAME`, `SOURCE_ID`, `LAST_WATERMARK_VAL`, `BI_MODIFIED_DATE` | Inspects current watermark position for monitoring or verification. |
+| `INGFW.USP_GET_WATERMARK_FOR_JOB` | `@JobId UNIQUEIDENTIFIER`, `@JobName VARCHAR(255)` | `JOB_ID`, `JOB_NAME`, `SOURCE_ID`, `LAST_WATERMARK_VAL`, `BI_MODIFIED_DATE` | Inspects current watermark position for monitoring or verification. |
 | `INGFW.USP_GET_EXECUTION_LOGGING_SUMMARY`| None | `TOTAL_BATCH_EXECUTIONS`, `TOTAL_JOB_EXECUTIONS`, `TOTAL_JOB_ERRORS` | Audit helper verifying total executions and error frequency. |
 | `INGFW.USP_CHECK_TRANSIENT_ERROR` | `@ErrorMessage NVARCHAR(MAX)` | `IS_TRANSIENT BIT`, `ERROR_CODE`, `ERROR_CATEGORY`, `EXCEPTION_CLASS` | **Evaluates errors against `CONF_TRANSIENT_ERRORS` to determine retry eligibility.** |
 | `INGFW.USP_GET_TRANSIENT_ERRORS` | None | All active rows from `CONF_TRANSIENT_ERRORS` | Preloads transient error classification lists into NiFi cache. |

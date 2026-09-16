@@ -4,7 +4,7 @@
 -- ==============================================================================
 
 CREATE OR ALTER PROCEDURE INGFW.USP_GET_JOB_SOURCE_CONFIG
-    @JobId INT
+    @JobId UNIQUEIDENTIFIER
 AS
 BEGIN
     SET NOCOUNT ON;

@@ -5,11 +5,11 @@
 WITH JobHierarchy AS (
     -- Anchor: root jobs (no parent)
     SELECT 
-        ID,
+        JOB_ID,
         JOB_NAME,
         PARENT_JOB_ID,
         0 AS Depth,
-        CAST(ID AS VARCHAR(MAX)) AS Path
+        CAST(JOB_ID AS VARCHAR(MAX)) AS Path
     FROM INGFW.CONF_BATCH_JOBS
     WHERE PARENT_JOB_ID IS NULL
 
@@ -17,18 +17,18 @@ WITH JobHierarchy AS (
 
     -- Recursive member
     SELECT 
-        child.ID,
+        child.JOB_ID,
         child.JOB_NAME,
         child.PARENT_JOB_ID,
         parent.Depth + 1,
-        parent.Path + '->' + CAST(child.ID AS VARCHAR(MAX))
+        parent.Path + '->' + CAST(child.JOB_ID AS VARCHAR(MAX))
     FROM INGFW.CONF_BATCH_JOBS child
-    JOIN JobHierarchy parent ON child.PARENT_JOB_ID = parent.ID
-    WHERE parent.Path NOT LIKE '%' + CAST(child.ID AS VARCHAR(MAX)) + '%'
+    JOIN JobHierarchy parent ON child.PARENT_JOB_ID = parent.JOB_ID
+    WHERE parent.Path NOT LIKE '%' + CAST(child.JOB_ID AS VARCHAR(MAX)) + '%'
       AND parent.Depth < 50
 )
 SELECT 
-    ID, 
+    JOB_ID, 
     JOB_NAME, 
     PARENT_JOB_ID, 
     Depth, 

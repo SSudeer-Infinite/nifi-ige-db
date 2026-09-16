@@ -95,11 +95,12 @@ GO
 IF OBJECT_ID('INGFW.CONF_BATCH_JOBS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_BATCH_JOBS (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        BATCH_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCHES(ID) ON DELETE CASCADE, -- Parent batch relationship
+        JOB_ID UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+        BATCH_ID INT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCHES(ID) ON DELETE SET NULL, -- Parent batch relationship (nullable for standalone jobs)
         JOB_NAME VARCHAR(255) NOT NULL UNIQUE,         -- Unique job pipeline identifier (e.g. J_POST_STAGING_001)
         JOB_TYPE VARCHAR(50) NOT NULL,                 -- Pipeline variant: RDBMS_TO_PARQUET_NO_RETRY or WITH_RETRY
-        PARENT_JOB_ID INT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID), -- Prerequisite job dependency in execution DAG
+        PIPELINE_ID VARCHAR(255) NULL,                 -- Optional override NiFi pipeline/process group identifier
+        PARENT_JOB_ID UNIQUEIDENTIFIER NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID), -- Prerequisite job dependency in execution DAG
         TRANSIENT_ERROR_RETRY_COUNT INT NOT NULL DEFAULT 0, -- Permitted in-flight retries for transient errors
         CLEANUP_ON_ERROR TINYINT NOT NULL DEFAULT 1,   -- 1 = Recursively purge _tmp_<id> staging folder on failure
         MAX_RETRY_ATTEMPTS INT NOT NULL DEFAULT 0,     -- Maximum outer recovery restart attempts
@@ -145,7 +146,7 @@ IF OBJECT_ID('INGFW.CONF_SOURCES', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_SOURCES (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        JOB_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID) ON DELETE CASCADE, -- 1:1 or 1:N job linkage
+        JOB_ID UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID) ON DELETE CASCADE, -- 1:1 or 1:N job linkage
         CONNECTION_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_CONNECTIONS(ID),           -- Physical source connection
         SOURCE_PROPERTIES NVARCHAR(MAX) NULL,          -- JSON payload: schema, table_name, custom SQL predicate
         WATERMARK_FIELD VARCHAR(255) NULL,             -- Column evaluated for incremental ingestion (e.g. id, modified_date)
@@ -173,7 +174,7 @@ IF OBJECT_ID('INGFW.CONF_DESTINATIONS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_DESTINATIONS (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        JOB_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID) ON DELETE CASCADE, -- Associated job pipeline
+        JOB_ID UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID) ON DELETE CASCADE, -- Associated job pipeline
         CONNECTION_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_CONNECTIONS(ID),           -- Target storage connection
         DESTINATION_PROPERTIES NVARCHAR(MAX) NULL,     -- JSON: target_dir, format, compression, partition scheme
         CHUNK_SIZE INT NULL DEFAULT 1000,              -- Target file row limit per output file
@@ -290,7 +291,7 @@ BEGIN
     CREATE TABLE INGFW.LOG_JOB_EXECUTIONS (
         ID INT IDENTITY(1,1) PRIMARY KEY,
         BATCH_EXECUTION_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.LOG_BATCH_EXECUTIONS(ID) ON DELETE CASCADE,
-        JOB_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID), -- Associated batch job definition
+        JOB_ID UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID), -- Associated batch job definition
         STATUS VARCHAR(50) NOT NULL,                   -- Job status: PENDING, RUNNING, SUCCESS, FAILED, SKIPPED
         RECORDS_PROCESSED BIGINT NOT NULL DEFAULT 0,   -- Total verified rows persisted to destination storage
         WATERMARK_START VARCHAR(255) NULL,             -- Watermark snapshot captured before extraction began
