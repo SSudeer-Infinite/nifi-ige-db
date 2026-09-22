@@ -4,7 +4,7 @@
 -- ==============================================================================
 
 CREATE OR ALTER PROCEDURE INGFW.USP_LOG_JOB_ERROR
-    @BatchExecutionId INT,
+    @BatchExecutionId INT = NULL,
     @JobExecutionId INT = NULL,
     @ErrorCode VARCHAR(50),
     @ErrorMessage NVARCHAR(MAX),

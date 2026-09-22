@@ -4,8 +4,8 @@
 -- ==============================================================================
 
 CREATE OR ALTER PROCEDURE INGFW.USP_CREATE_JOB_EXECUTION
-    @BatchExecutionId INT,
-    @JobId UNIQUEIDENTIFIER,
+    @BatchExecutionId INT = NULL,
+    @JobId INT,
     @WatermarkStart VARCHAR(255)
 AS
 BEGIN

@@ -1,28 +1,76 @@
 -- ==============================================================================
 -- Repeatable Migration: R__02_usp_get_job_source_config.sql
--- Description: Retrieves source connection, table, watermark config
+-- Description: Retrieves source, destination, watermark, and connection configs
 -- ==============================================================================
 
-CREATE OR ALTER PROCEDURE INGFW.USP_GET_JOB_SOURCE_CONFIG
-    @JobId UNIQUEIDENTIFIER
+CREATE OR ALTER PROCEDURE INGFW.USP_GET_JOB_SOURCE_DEST_CONFIG
+    @JobId INT = NULL,
+    @JobIdentifier VARCHAR(50) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
 
     SELECT 
+        -- Job Definition
+        BJ.ID AS BATCH_JOB_ID,
+        BJ.SOLUTION_ID,
+        BJ.PROJECT_ID,
+        BJ.JOB_ID,
+        BJ.BATCH_ID,
+        BJ.JOB_DESCRIPTION,
+        BJ.JOB_TYPE,
+        BJ.PIPELINE_ID,
+
+        -- Source Configuration (NULL if job has no source)
         S.ID AS SOURCE_ID,
+        S.CONNECTION_ID AS SOURCE_CONNECTION_ID,
+        CS.CONNECTION_NAME AS SOURCE_CONNECTION_NAME,
+        CS.CONNECTION_TYPE AS SOURCE_CONNECTION_TYPE,
+        CS.CONNECTION_PROPERTIES AS SOURCE_CONNECTION_PROPERTIES,
         S.SOURCE_PROPERTIES,
         S.WATERMARK_FIELD,
         S.WATERMARK_TYPE,
-        S.CHUNK_SIZE,
+        S.CHUNK_SIZE AS SOURCE_CHUNK_SIZE,
+        S.CHUNK_SIZE AS CHUNK_SIZE, -- Backward compatibility alias
+        S.THROTTLE_RATE_TYPE,
         S.THROTTLE_RATE,
         ISNULL(W.LAST_WATERMARK_VAL, 0) AS LAST_WATERMARK_VAL,
         W.LAST_WATERMARK_TIMESTAMP,
         W.LAST_WATERMARK_STR,
-        S.BI_CREATED_DATE,
-        S.BI_MODIFIED_DATE
-    FROM INGFW.CONF_SOURCES S
+        W.WATERMARK_STATE,
+        S.BI_CREATED_DATE AS SOURCE_CREATED_DATE,
+        S.BI_MODIFIED_DATE AS SOURCE_MODIFIED_DATE,
+
+        -- Destination Configuration (NULL if job has no destination)
+        D.ID AS DESTINATION_ID,
+        D.CONNECTION_ID AS DESTINATION_CONNECTION_ID,
+        CD.CONNECTION_NAME AS DESTINATION_CONNECTION_NAME,
+        CD.CONNECTION_TYPE AS DESTINATION_CONNECTION_TYPE,
+        CD.CONNECTION_PROPERTIES AS DESTINATION_CONNECTION_PROPERTIES,
+        D.DESTINATION_PROPERTIES,
+        D.CHUNK_SIZE AS DESTINATION_CHUNK_SIZE,
+        D.BACK_PRESSURE_LIMIT,
+        D.BI_CREATED_DATE AS DESTINATION_CREATED_DATE,
+        D.BI_MODIFIED_DATE AS DESTINATION_MODIFIED_DATE
+
+    FROM INGFW.CONF_BATCH_JOBS BJ
+    LEFT JOIN INGFW.CONF_SOURCES S ON BJ.ID = S.JOB_ID
     LEFT JOIN INGFW.CONF_WATERMARKS W ON S.ID = W.SOURCE_ID
-    WHERE S.JOB_ID = @JobId;
+    LEFT JOIN INGFW.CONF_CONNECTIONS CS ON S.CONNECTION_ID = CS.ID
+    LEFT JOIN INGFW.CONF_DESTINATIONS D ON BJ.ID = D.JOB_ID
+    LEFT JOIN INGFW.CONF_CONNECTIONS CD ON D.CONNECTION_ID = CD.ID
+    WHERE (@JobId IS NOT NULL AND BJ.ID = @JobId)
+       OR (@JobIdentifier IS NOT NULL AND BJ.JOB_ID = @JobIdentifier);
+END;
+GO
+
+-- Backward-compatibility wrapper for USP_GET_JOB_SOURCE_CONFIG
+CREATE OR ALTER PROCEDURE INGFW.USP_GET_JOB_SOURCE_CONFIG
+    @JobId INT = NULL,
+    @JobIdentifier VARCHAR(50) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    EXEC INGFW.USP_GET_JOB_SOURCE_DEST_CONFIG @JobId = @JobId, @JobIdentifier = @JobIdentifier;
 END;
 GO

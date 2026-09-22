@@ -4,7 +4,7 @@
 -- ==============================================================================
 
 CREATE OR ALTER PROCEDURE INGFW.USP_CREATE_BATCH_EXECUTION
-    @BatchId INT,
+    @BatchId VARCHAR(50) = NULL,
     @InvocationId VARCHAR(255),
     @Status VARCHAR(50) = 'RUNNING'
 AS

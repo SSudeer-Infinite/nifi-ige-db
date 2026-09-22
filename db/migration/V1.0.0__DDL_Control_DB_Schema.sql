@@ -70,8 +70,7 @@ GO
 IF OBJECT_ID('INGFW.CONF_BATCHES', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_BATCHES (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        BATCH_NAME VARCHAR(255) NOT NULL UNIQUE,       -- Unique enterprise batch identifier (e.g. BAT_POST_STAGING_001)
+        BATCH_ID VARCHAR(50) PRIMARY KEY,              -- Unique enterprise batch identifier (e.g. BAT_POST_STAGING_001)
         DESCRIPTION NVARCHAR(MAX) NULL,                -- Human-readable description of workload and domain
         RECOVERY_STRATEGY VARCHAR(50) NOT NULL DEFAULT 'IGNORE', -- Failure policy: IGNORE, FAIL, BATCH_RESTART, JOB_RESTART
         MAX_TRIES INT NOT NULL DEFAULT 0,              -- Maximum outer retry attempts allowed for the batch
@@ -95,18 +94,22 @@ GO
 IF OBJECT_ID('INGFW.CONF_BATCH_JOBS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_BATCH_JOBS (
-        JOB_ID UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-        BATCH_ID INT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCHES(ID) ON DELETE SET NULL, -- Parent batch relationship (nullable for standalone jobs)
-        JOB_NAME VARCHAR(255) NOT NULL UNIQUE,         -- Unique job pipeline identifier (e.g. J_POST_STAGING_001)
+        ID INT IDENTITY(1,1) PRIMARY KEY,             -- Auto-increment primary key
+        SOLUTION_ID VARCHAR(50) NOT NULL,              -- Solution identifier
+        PROJECT_ID VARCHAR(50) NOT NULL,               -- Project identifier
+        JOB_ID VARCHAR(50) NOT NULL,                   -- Business job identifier
+        BATCH_ID VARCHAR(50) NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCHES(BATCH_ID) ON DELETE SET NULL, -- Parent batch relationship (nullable for standalone jobs)
+        JOB_DESCRIPTION VARCHAR(255) NULL,             -- Pipeline description (renamed from JOB_NAME)
         JOB_TYPE VARCHAR(50) NOT NULL,                 -- Pipeline variant: RDBMS_TO_PARQUET_NO_RETRY or WITH_RETRY
         PIPELINE_ID VARCHAR(255) NULL,                 -- Optional override NiFi pipeline/process group identifier
-        PARENT_JOB_ID UNIQUEIDENTIFIER NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID), -- Prerequisite job dependency in execution DAG
+        PREV_JOB_ID INT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID), -- Prerequisite job dependency in execution DAG
         TRANSIENT_ERROR_RETRY_COUNT INT NOT NULL DEFAULT 0, -- Permitted in-flight retries for transient errors
         CLEANUP_ON_ERROR TINYINT NOT NULL DEFAULT 1,   -- 1 = Recursively purge _tmp_<id> staging folder on failure
         MAX_RETRY_ATTEMPTS INT NOT NULL DEFAULT 0,     -- Maximum outer recovery restart attempts
         IS_ACTIVE BIT NOT NULL DEFAULT 1,              -- 1 = Active for processing; 0 = Decommissioned / Disabled
         BI_CREATED_DATE DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        BI_MODIFIED_DATE DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP
+        BI_MODIFIED_DATE DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT UQ_CONF_BATCH_JOBS UNIQUE (SOLUTION_ID, PROJECT_ID, JOB_ID)
     );
 END
 GO
@@ -146,11 +149,11 @@ IF OBJECT_ID('INGFW.CONF_SOURCES', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_SOURCES (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        JOB_ID UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID) ON DELETE CASCADE, -- 1:1 or 1:N job linkage
+        JOB_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID) ON DELETE CASCADE, -- 1:1 or 1:N job linkage
         CONNECTION_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_CONNECTIONS(ID),           -- Physical source connection
         SOURCE_PROPERTIES NVARCHAR(MAX) NULL,          -- JSON payload: schema, table_name, custom SQL predicate
-        WATERMARK_FIELD VARCHAR(255) NULL,             -- Column evaluated for incremental ingestion (e.g. id, modified_date)
-        WATERMARK_TYPE VARCHAR(50) NULL,               -- Data type: BIGINT, TIMESTAMP, STRING
+--        WATERMARK_FIELD VARCHAR(255) NULL,             -- Column evaluated for incremental ingestion (e.g. id, modified_date)
+--        WATERMARK_TYPE VARCHAR(50) NULL,               -- Data type: BIGINT, TIMESTAMP, STRING
         CHUNK_SIZE INT NULL DEFAULT 1000,              -- Micro-batch row size extracted per query
         THROTTLE_RATE_TYPE INT NULL DEFAULT 0,         -- 0 = requests per second; 1 = absolute count
         THROTTLE_RATE INT NULL DEFAULT 5,              -- Throttle limit to prevent overwhelming source database
@@ -174,7 +177,7 @@ IF OBJECT_ID('INGFW.CONF_DESTINATIONS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_DESTINATIONS (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        JOB_ID UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID) ON DELETE CASCADE, -- Associated job pipeline
+        JOB_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID) ON DELETE CASCADE, -- Associated job pipeline
         CONNECTION_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_CONNECTIONS(ID),           -- Target storage connection
         DESTINATION_PROPERTIES NVARCHAR(MAX) NULL,     -- JSON: target_dir, format, compression, partition scheme
         CHUNK_SIZE INT NULL DEFAULT 1000,              -- Target file row limit per output file
@@ -205,6 +208,11 @@ BEGIN
 END
 GO
 
+---
+    source_id: 101
+    Source Keys are (account_name, transaction_ref, txn_date)
+---
+
 -- ==============================================================================
 -- 7. TABLE: INGFW.CONF_WATERMARKS
 -- ------------------------------------------------------------------------------
@@ -218,15 +226,38 @@ IF OBJECT_ID('INGFW.CONF_WATERMARKS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.CONF_WATERMARKS (
         SOURCE_ID INT PRIMARY KEY FOREIGN KEY REFERENCES INGFW.CONF_SOURCES(ID) ON DELETE CASCADE, -- 1:1 with source
-        LAST_WATERMARK_VAL BIGINT NULL,                -- Highest numeric/identity watermark extracted and committed
-        LAST_WATERMARK_TIMESTAMP DATETIME2 NULL,       -- Highest temporal/datetime watermark extracted and committed
-        LAST_WATERMARK_STR VARCHAR(255) NULL,          -- String/alphanumeric watermark value
+        -- LAST_WATERMARK_VAL BIGINT NULL,                -- Highest numeric/identity watermark extracted and committed
+        -- LAST_WATERMARK_TIMESTAMP DATETIME2 NULL,       -- Highest temporal/datetime watermark extracted and committed
+        -- LAST_WATERMARK_STR VARCHAR(255) NULL,          -- String/alphanumeric watermark value
         WATERMARK_STATE NVARCHAR(MAX) NULL,            -- Auxiliary JSON state payload for composite watermarks
         BI_CREATED_DATE DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP,
         BI_MODIFIED_DATE DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 END
 GO
+
+---
+RUN 1:
+    source_id: 101
+    WATERMARK_STATE: {
+        "account_name": "SAVINGS", 
+        "transaction_ref": "REF00001000", 
+        "txn_date": "2024-06-06"
+    },
+    BI_CREATED_DATE: "2024-06-06"
+    BI_MODIFIED_DATE: "2024-06-06"
+
+RUN 2:
+    source_id: 101
+    WATERMARK_STATE: {
+        "account_name": "CURRENT", 
+        "transaction_ref": "REF00006000", 
+        "txn_date": "2024-06-06"
+    },
+    BI_CREATED_DATE: "2024-06-07"
+    BI_MODIFIED_DATE: "2024-06-07"
+
+---
 
 -- ==============================================================================
 -- 8. TABLE: INGFW.CONF_TRANSIENT_ERRORS
@@ -266,7 +297,7 @@ IF OBJECT_ID('INGFW.LOG_BATCH_EXECUTIONS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.LOG_BATCH_EXECUTIONS (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        BATCH_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCHES(ID), -- Link to configured batch
+        BATCH_ID VARCHAR(50) NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCHES(BATCH_ID) ON DELETE SET NULL, -- Link to configured batch (nullable for standalone jobs)
         INVOCATION_ID VARCHAR(255) NOT NULL UNIQUE,    -- Unique execution token (e.g. b-exec-20260904-120000-abcd12)
         STATUS VARCHAR(50) NOT NULL,                   -- Lifecycle state: RUNNING, SUCCESS, PARTIAL_SUCCESS, FAILED
         START_TIME DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP, -- Execution trigger timestamp
@@ -290,8 +321,8 @@ IF OBJECT_ID('INGFW.LOG_JOB_EXECUTIONS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.LOG_JOB_EXECUTIONS (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        BATCH_EXECUTION_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.LOG_BATCH_EXECUTIONS(ID) ON DELETE CASCADE,
-        JOB_ID UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(JOB_ID), -- Associated batch job definition
+        BATCH_EXECUTION_ID INT NULL FOREIGN KEY REFERENCES INGFW.LOG_BATCH_EXECUTIONS(ID) ON DELETE SET NULL, -- Nullable for standalone job runs
+        JOB_ID INT NOT NULL FOREIGN KEY REFERENCES INGFW.CONF_BATCH_JOBS(ID), -- Associated batch job definition
         STATUS VARCHAR(50) NOT NULL,                   -- Job status: PENDING, RUNNING, SUCCESS, FAILED, SKIPPED
         RECORDS_PROCESSED BIGINT NOT NULL DEFAULT 0,   -- Total verified rows persisted to destination storage
         WATERMARK_START VARCHAR(255) NULL,             -- Watermark snapshot captured before extraction began
@@ -317,7 +348,7 @@ IF OBJECT_ID('INGFW.LOG_JOB_ERRORS', 'U') IS NULL
 BEGIN
     CREATE TABLE INGFW.LOG_JOB_ERRORS (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        BATCH_INVOCATION_ID INT NOT NULL,              -- References INGFW.LOG_BATCH_EXECUTIONS(ID)
+        BATCH_INVOCATION_ID INT NULL,                  -- References INGFW.LOG_BATCH_EXECUTIONS(ID) (nullable for standalone runs)
         JOB_INVOCATION_ID INT NULL,                    -- References INGFW.LOG_JOB_EXECUTIONS(ID)
         ERROR_CODE VARCHAR(50) NOT NULL,               -- Standardized code (e.g. SOCKET_TIMEOUT, DEADLOCK, PERMANENT_AUTH)
         ERROR_MESSAGE NVARCHAR(MAX) NOT NULL,          -- Sanitized error message
