@@ -88,7 +88,7 @@ GO
 -- PURPOSE:
 --   Defines individual table extraction pipelines belonging to a batch.
 --   Configures pipeline execution variant (fail-fast vs in-flight retry),
---   directed acyclic graph (DAG) dependencies via PARENT_JOB_ID, transient
+--   directed acyclic graph (DAG) dependencies via PREV_JOB_ID, transient
 --   retry ceilings, and automatic staging cleanup behavior.
 -- ==============================================================================
 IF OBJECT_ID('INGFW.CONF_BATCH_JOBS', 'U') IS NULL

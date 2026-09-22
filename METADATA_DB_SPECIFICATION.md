@@ -104,7 +104,7 @@ Prefixing tables according to functional roles (`CONF_` for configuration tables
 ```mermaid
 erDiagram
     CONF_BATCHES ||--o{ CONF_BATCH_JOBS : "contains (1:N)"
-    CONF_BATCH_JOBS ||--o{ CONF_BATCH_JOBS : "parent_job_id (1:N self-ref)"
+    CONF_BATCH_JOBS ||--o{ CONF_BATCH_JOBS : "prev_job_id (1:N self-ref)"
     CONF_BATCH_JOBS ||--o{ CONF_SOURCES : "configures extraction (1:N)"
     CONF_BATCH_JOBS ||--o{ CONF_DESTINATIONS : "configures landing (1:N)"
     CONF_CONNECTIONS ||--o{ CONF_SOURCES : "provides source conn (1:N)"
@@ -138,7 +138,7 @@ erDiagram
         varchar JOB_DESCRIPTION "Pipeline description"
         varchar JOB_TYPE "NO_RETRY or WITH_RETRY"
         varchar PIPELINE_ID "Override pipeline ID"
-        int PARENT_JOB_ID FK "Self-referencing dependency to ID"
+        int PREV_JOB_ID FK "Self-referencing dependency to ID"
         int TRANSIENT_ERROR_RETRY_COUNT "Max transient retries"
         tinyint CLEANUP_ON_ERROR "1 = purge staging dir"
         int MAX_RETRY_ATTEMPTS "Job attempt ceiling"
@@ -161,8 +161,6 @@ erDiagram
         int JOB_ID FK "References CONF_BATCH_JOBS(ID)"
         int CONNECTION_ID FK "References CONF_CONNECTIONS(ID)"
         nvarchar SOURCE_PROPERTIES "JSON schema, table, custom SQL"
-        varchar WATERMARK_FIELD "Column for incremental check"
-        varchar WATERMARK_TYPE "BIGINT, TIMESTAMP, STRING"
         int CHUNK_SIZE "FlowFile batch size"
         int THROTTLE_RATE_TYPE "0=per sec, 1=absolute"
         int THROTTLE_RATE "Throttle cap"
@@ -191,10 +189,7 @@ erDiagram
 
     CONF_WATERMARKS {
         int SOURCE_ID PK,FK "References CONF_SOURCES(ID)"
-        bigint LAST_WATERMARK_VAL "Highest numerical watermark"
-        datetime2 LAST_WATERMARK_TIMESTAMP "Highest temporal watermark"
-        varchar LAST_WATERMARK_STR "String watermark value"
-        nvarchar WATERMARK_STATE "JSON auxiliary state payload"
+        nvarchar WATERMARK_STATE "JSON state payload for watermarks"
         datetime2 BI_CREATED_DATE "Creation timestamp"
         datetime2 BI_MODIFIED_DATE "Update timestamp"
     }
@@ -281,7 +276,7 @@ erDiagram
 * **Unique Key**: `(SOLUTION_ID, PROJECT_ID, JOB_ID)`
 * **Foreign Keys**:
   * `BATCH_ID` $\rightarrow$ `INGFW.CONF_BATCHES(BATCH_ID)` (Nullable, ON DELETE SET NULL)
-  * `PARENT_JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(ID)` (Nullable, DAG dependency)
+  * `PREV_JOB_ID` $\rightarrow$ `INGFW.CONF_BATCH_JOBS(ID)` (Nullable, DAG dependency)
 
 | Column Name | Data Type | Nullable | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
@@ -293,7 +288,7 @@ erDiagram
 | `JOB_DESCRIPTION` | `VARCHAR(255)` | Yes | NULL | Pipeline description (renamed from `JOB_NAME`). |
 | `JOB_TYPE` | `VARCHAR(50)` | No | - | Ingestion pipeline variant: `RDBMS_TO_PARQUET_NO_RETRY` or `RDBMS_TO_PARQUET_WITH_RETRY`. |
 | `PIPELINE_ID` | `VARCHAR(255)` | Yes | NULL | Optional override NiFi pipeline or process group identifier. |
-| `PARENT_JOB_ID` | `INT` | Yes | NULL | Self-referencing FK specifying prerequisite job before dispatch. |
+| `PREV_JOB_ID` | `INT` | Yes | NULL | Self-referencing FK specifying prerequisite job before dispatch. |
 | `TRANSIENT_ERROR_RETRY_COUNT` | `INT` | No | `0` | Maximum allowable in-flight retries for transient errors. |
 | `CLEANUP_ON_ERROR` | `TINYINT` | No | `1` | `1` = Purge temporary staging folder `_tmp_<id>` on job failure. |
 | `MAX_RETRY_ATTEMPTS` | `INT` | No | `0` | Outer scheduler recovery attempt limit. |
@@ -331,8 +326,6 @@ erDiagram
 | `JOB_ID` | `INT` | No | - | Foreign key to associated batch job (`CONF_BATCH_JOBS.ID`). |
 | `CONNECTION_ID` | `INT` | No | - | Foreign key to source connection profile. |
 | `SOURCE_PROPERTIES` | `NVARCHAR(MAX)` | Yes | NULL | JSON configuration containing `schema`, `table_name`, `custom_query`. |
-| `WATERMARK_FIELD` | `VARCHAR(255)` | Yes | NULL | Source column used for incremental tracking (e.g., `id`, `modified_date`). |
-| `WATERMARK_TYPE` | `VARCHAR(50)` | Yes | NULL | Data type of watermark column: `BIGINT`, `TIMESTAMP`, `STRING`. |
 | `CHUNK_SIZE` | `INT` | Yes | `1000` | Micro-batch row size extracted per query. |
 | `THROTTLE_RATE_TYPE` | `INT` | Yes | `0` | `0` = Rate per second; `1` = Absolute transaction count. |
 | `THROTTLE_RATE` | `INT` | Yes | `5` | Maximum requests permitted per unit interval. |
@@ -384,9 +377,6 @@ erDiagram
 | Column Name | Data Type | Nullable | Default | Description |
 | :--- | :--- | :---: | :---: | :--- |
 | `SOURCE_ID` | `INT` | No | - | Primary key and foreign key referencing `CONF_SOURCES(ID)`. |
-| `LAST_WATERMARK_VAL` | `BIGINT` | Yes | NULL | Highest integer/identity value extracted and committed. |
-| `LAST_WATERMARK_TIMESTAMP` | `DATETIME2` | Yes | NULL | Highest temporal watermark extracted and committed. |
-| `LAST_WATERMARK_STR` | `VARCHAR(255)` | Yes | NULL | Highest alphanumeric watermark value extracted. |
 | `WATERMARK_STATE` | `NVARCHAR(MAX)` | Yes | NULL | Auxiliary JSON state data for multi-column watermark models. |
 | `BI_CREATED_DATE` | `DATETIME2` | No | `CURRENT_TIMESTAMP` | Record creation timestamp. |
 | `BI_MODIFIED_DATE` | `DATETIME2` | No | `CURRENT_TIMESTAMP` | Record last update timestamp (updated via `USP_ADVANCE_WATERMARK`). |
@@ -493,10 +483,10 @@ All interaction with `METADATA_DB` is mediated exclusively through these 14 stor
 | `INGFW.USP_CREATE_JOB_EXECUTION` | `@BatchExecutionId INT = NULL`, `@JobId INT`, `@WatermarkStart VARCHAR(255)` | `JOB_EXECUTION_ID INT` | Inserts job run into `LOG_JOB_EXECUTIONS` with pre-run watermark snapshot. |
 | `INGFW.USP_UPDATE_JOB_EXECUTION_SUCCESS` | `@JobExecutionId INT`, `@RecordsProcessed BIGINT`, `@WatermarkEnd VARCHAR(255)` | None | Records successful job run, row count, and closing watermark. |
 | `INGFW.USP_UPDATE_JOB_EXECUTION_FAILURE` | `@JobExecutionId INT`, `@WatermarkEnd VARCHAR(255)` | None | Records job failure and retains pre-run watermark value. |
-| `INGFW.USP_ADVANCE_WATERMARK` | `@SourceId INT`, `@NewWatermarkVal BIGINT` | None | Two-phase commit: updates `CONF_WATERMARKS` table. |
+| `INGFW.USP_ADVANCE_WATERMARK` | `@SourceId INT`, `@WatermarkState NVARCHAR(MAX)` | None | Two-phase commit: updates `CONF_WATERMARKS` table. |
 | `INGFW.USP_LOG_JOB_ERROR` | `@BatchExecutionId INT = NULL`, `@JobExecutionId INT`, `@ErrorCode VARCHAR(50)`, `@ErrorMessage NVARCHAR(MAX)`, `@StackTrace NVARCHAR(MAX)` | None | Centralized logging of errors with structured classification in `LOG_JOB_ERRORS`. |
 | `INGFW.USP_GET_BATCH_EXECUTION_STATUS` | `@InvocationId VARCHAR(255) = NULL`, `@JobExecutionId INT = NULL` | 3 Result Sets: (1) Batch Summary, (2) Job Details, (3) Error Logs | Generates status payload for batch runs or standalone jobs. |
-| `INGFW.USP_GET_WATERMARK_FOR_JOB` | `@JobId VARCHAR(50)`, `@JobDescription VARCHAR(255)` | `ID`, `SOLUTION_ID`, `PROJECT_ID`, `JOB_ID`, `JOB_DESCRIPTION`, `SOURCE_ID`, `LAST_WATERMARK_VAL`, `BI_MODIFIED_DATE` | Inspects current watermark position for monitoring or verification. |
+| `INGFW.USP_GET_WATERMARK_FOR_JOB` | `@JobId VARCHAR(50)`, `@JobDescription VARCHAR(255)` | `ID`, `SOLUTION_ID`, `PROJECT_ID`, `JOB_ID`, `JOB_DESCRIPTION`, `SOURCE_ID`, `WATERMARK_STATE`, `BI_MODIFIED_DATE` | Inspects current watermark position for monitoring or verification. |
 | `INGFW.USP_GET_EXECUTION_LOGGING_SUMMARY`| None | `TOTAL_BATCH_EXECUTIONS`, `TOTAL_JOB_EXECUTIONS`, `TOTAL_JOB_ERRORS` | Audit helper verifying total executions and error frequency. |
 | `INGFW.USP_CHECK_TRANSIENT_ERROR` | `@ErrorMessage NVARCHAR(MAX)` | `IS_TRANSIENT BIT`, `ERROR_CODE`, `ERROR_CATEGORY`, `EXCEPTION_CLASS` | **Evaluates errors against `CONF_TRANSIENT_ERRORS` to determine retry eligibility.** |
 | `INGFW.USP_GET_TRANSIENT_ERRORS` | None | All active rows from `CONF_TRANSIENT_ERRORS` | Preloads transient error classification lists into NiFi cache. |

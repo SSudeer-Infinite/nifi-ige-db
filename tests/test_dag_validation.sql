@@ -10,11 +10,11 @@ WITH JobHierarchy AS (
         PROJECT_ID,
         JOB_ID,
         JOB_DESCRIPTION,
-        PARENT_JOB_ID,
+        PREV_JOB_ID,
         0 AS Depth,
         CAST(ID AS VARCHAR(MAX)) AS Path
     FROM INGFW.CONF_BATCH_JOBS
-    WHERE PARENT_JOB_ID IS NULL
+    WHERE PREV_JOB_ID IS NULL
 
     UNION ALL
 
@@ -25,11 +25,11 @@ WITH JobHierarchy AS (
         child.PROJECT_ID,
         child.JOB_ID,
         child.JOB_DESCRIPTION,
-        child.PARENT_JOB_ID,
+        child.PREV_JOB_ID,
         parent.Depth + 1,
         parent.Path + '->' + CAST(child.ID AS VARCHAR(MAX))
     FROM INGFW.CONF_BATCH_JOBS child
-    JOIN JobHierarchy parent ON child.PARENT_JOB_ID = parent.ID
+    JOIN JobHierarchy parent ON child.PREV_JOB_ID = parent.ID
     WHERE parent.Path NOT LIKE '%' + CAST(child.ID AS VARCHAR(MAX)) + '%'
       AND parent.Depth < 50
 )
@@ -39,7 +39,7 @@ SELECT
     PROJECT_ID,
     JOB_ID, 
     JOB_DESCRIPTION, 
-    PARENT_JOB_ID, 
+    PREV_JOB_ID, 
     Depth, 
     Path
 FROM JobHierarchy;
