@@ -90,3 +90,25 @@ nifi-ige-db/
 flyway migrate
 ```
 Or via Docker/CLI specifying `flyway.conf`.
+
+### Testing via `mssql-metadata` Container (Docker Compose)
+You can test the entire migration sequence and stored procedures using the `mssql-metadata` service running from `nifi-ige-app`:
+
+```powershell
+# 1. Ensure metadata_db database exists
+docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Strong_Password_123!' -C -i metadata_db.sql
+
+# 2. Run schema callback & versioned migrations
+Get-Content db/callbacks/beforeMigrate.sql -Raw | docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -d metadata_db -U sa -P 'Strong_Password_123!' -C -b
+Get-Content db/migration/V1.0.0__DDL_Control_DB_Schema.sql -Raw | docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -d metadata_db -U sa -P 'Strong_Password_123!' -C -b
+Get-Content db/migration/V1.1.0__CONFIG_Onboard_Eprism_Sources_And_Seed_Data.sql -Raw | docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -d metadata_db -U sa -P 'Strong_Password_123!' -C -b
+
+# 3. Deploy repeatable stored procedures
+Get-ChildItem db/repeatable/R__*.sql | Sort-Object Name | ForEach-Object {
+    Get-Content $_.FullName -Raw | docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -d metadata_db -U sa -P 'Strong_Password_123!' -C -b
+}
+
+# 4. Run test validation suites
+Get-Content tests/test_dag_validation.sql -Raw | docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -d metadata_db -U sa -P 'Strong_Password_123!' -C -b
+Get-Content tests/test_sp_suite.sql -Raw | docker exec -i mssql-metadata /opt/mssql-tools18/bin/sqlcmd -S localhost -d metadata_db -U sa -P 'Strong_Password_123!' -C -b
+```

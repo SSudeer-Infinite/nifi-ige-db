@@ -208,10 +208,9 @@ BEGIN
 END
 GO
 
----
-    source_id: 101
-    Source Keys are (account_name, transaction_ref, txn_date)
----
+-- Example:
+--     source_id: 101
+--     Source Keys are (account_name, transaction_ref, txn_date)
 
 -- ==============================================================================
 -- 7. TABLE: INGFW.CONF_WATERMARKS
@@ -236,28 +235,26 @@ BEGIN
 END
 GO
 
----
-RUN 1:
-    source_id: 101
-    WATERMARK_STATE: {
-        "account_name": "SAVINGS", 
-        "transaction_ref": "REF00001000", 
-        "txn_date": "2024-06-06"
-    },
-    BI_CREATED_DATE: "2024-06-06"
-    BI_MODIFIED_DATE: "2024-06-06"
-
-RUN 2:
-    source_id: 101
-    WATERMARK_STATE: {
-        "account_name": "CURRENT", 
-        "transaction_ref": "REF00006000", 
-        "txn_date": "2024-06-06"
-    },
-    BI_CREATED_DATE: "2024-06-07"
-    BI_MODIFIED_DATE: "2024-06-07"
-
----
+-- Example:
+-- RUN 1:
+--     source_id: 101
+--     WATERMARK_STATE: {
+--         "account_name": "SAVINGS", 
+--         "transaction_ref": "REF00001000", 
+--         "txn_date": "2024-06-06"
+--     },
+--     BI_CREATED_DATE: "2024-06-06"
+--     BI_MODIFIED_DATE: "2024-06-06"
+-- 
+-- RUN 2:
+--     source_id: 101
+--     WATERMARK_STATE: {
+--         "account_name": "CURRENT", 
+--         "transaction_ref": "REF00006000", 
+--         "txn_date": "2024-06-06"
+--     },
+--     BI_CREATED_DATE: "2024-06-07"
+--     BI_MODIFIED_DATE: "2024-06-07"
 
 -- ==============================================================================
 -- 8. TABLE: INGFW.CONF_TRANSIENT_ERRORS

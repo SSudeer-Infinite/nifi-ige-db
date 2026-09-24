@@ -1,14 +1,16 @@
 USE [master]
 GO
 
-/****** Object:  Database [metadata_db]    Script Date: 03-09-2026 14:04:20 ******/
-CREATE DATABASE [metadata_db]
- CONTAINMENT = NONE
- ON  PRIMARY 
-( NAME = N'metadata_db', FILENAME = N'/var/opt/mssql/data/metadata_db.mdf' , SIZE = 8192KB , MAXSIZE = UNLIMITED, FILEGROWTH = 65536KB )
- LOG ON 
-( NAME = N'metadata_db_log', FILENAME = N'/var/opt/mssql/data/metadata_db_log.ldf' , SIZE = 8192KB , MAXSIZE = 2048GB , FILEGROWTH = 65536KB )
- WITH CATALOG_COLLATION = DATABASE_DEFAULT, LEDGER = OFF
+IF NOT EXISTS (SELECT 1 FROM sys.databases WHERE name = 'metadata_db')
+BEGIN
+    CREATE DATABASE [metadata_db]
+     CONTAINMENT = NONE
+     ON  PRIMARY 
+    ( NAME = N'metadata_db', FILENAME = N'/var/opt/mssql/data/metadata_db.mdf' , SIZE = 8192KB , MAXSIZE = UNLIMITED, FILEGROWTH = 65536KB )
+     LOG ON 
+    ( NAME = N'metadata_db_log', FILENAME = N'/var/opt/mssql/data/metadata_db_log.ldf' , SIZE = 8192KB , MAXSIZE = 2048GB , FILEGROWTH = 65536KB )
+     WITH CATALOG_COLLATION = DATABASE_DEFAULT, LEDGER = OFF;
+END
 GO
 
 IF (1 = FULLTEXTSERVICEPROPERTY('IsFullTextInstalled'))
